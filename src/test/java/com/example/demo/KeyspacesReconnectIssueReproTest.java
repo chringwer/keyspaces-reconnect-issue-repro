@@ -1,7 +1,6 @@
 package com.example.demo;
 
 import static java.net.InetSocketAddress.createUnresolved;
-import static org.assertj.core.api.Assertions.assertThat;
 
 import com.datastax.oss.driver.api.core.CqlSession;
 import com.datastax.oss.driver.api.core.config.DriverConfigLoader;
@@ -11,10 +10,17 @@ import com.datastax.oss.driver.internal.core.context.DefaultDriverContext;
 import com.datastax.oss.driver.internal.core.control.ControlConnection;
 import com.datastax.oss.driver.internal.core.metadata.DefaultNode;
 import com.datastax.oss.driver.internal.core.metadata.NodeStateEvent;
+import com.datastax.oss.driver.shaded.guava.common.collect.Maps;
+import com.datastax.oss.driver.shaded.guava.common.collect.Multimap;
+import com.datastax.oss.driver.shaded.guava.common.collect.MultimapBuilder;
+import com.datastax.oss.driver.shaded.guava.common.collect.Multimaps;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import org.assertj.core.api.SoftAssertions;
 import org.junit.jupiter.api.Test;
 import software.aws.mcs.auth.SigV4AuthProvider;
 
@@ -51,9 +57,46 @@ public class KeyspacesReconnectIssueReproTest {
     List<Map<UUID, EndPoint>> nodeListHistory =
         ((InterceptingTopologyMonitor) context.getTopologyMonitor()).getHistory();
 
-    Map<UUID, EndPoint> firstNodeList = nodeListHistory.get(0);
+    SoftAssertions assertions = new SoftAssertions();
 
-    assertThat(nodeListHistory)
-        .allSatisfy(nodeList -> assertThat(nodeList.keySet()).isEqualTo(firstNodeList.keySet()));
+    assertions
+        .assertThat(findAmbiguousEndpoints(nodeListHistory))
+        .as("Ambiguous Endpoints By HostId")
+        .isEmpty();
+
+    assertions
+        .assertThat(findAmbiguousHostIds(nodeListHistory))
+        .as("Ambiguous HostIds By Endpoint")
+        .isEmpty();
+
+    assertions.assertAll();
+  }
+
+  private static Map<EndPoint, Collection<UUID>> findAmbiguousEndpoints(
+      List<Map<UUID, EndPoint>> nodeListHistory) {
+    Multimap<EndPoint, UUID> hostIdByEndpoint =
+        nodeListHistory.stream()
+            .flatMap(nodeList -> nodeList.entrySet().stream())
+            .collect(
+                Multimaps.toMultimap(
+                    Entry::getValue,
+                    Entry::getKey,
+                    MultimapBuilder.hashKeys().treeSetValues()::build));
+
+    return Maps.filterValues(hostIdByEndpoint.asMap(), values -> values.size() > 1);
+  }
+
+  private static Map<UUID, Collection<EndPoint>> findAmbiguousHostIds(
+      List<Map<UUID, EndPoint>> nodeListHistory) {
+    Multimap<UUID, EndPoint> endpointsByHostId =
+        nodeListHistory.stream()
+            .flatMap(nodeList -> nodeList.entrySet().stream())
+            .collect(
+                Multimaps.toMultimap(
+                    Entry::getKey,
+                    Entry::getValue,
+                    MultimapBuilder.treeKeys().hashSetValues()::build));
+
+    return Maps.filterValues(endpointsByHostId.asMap(), values -> values.size() > 1);
   }
 }
