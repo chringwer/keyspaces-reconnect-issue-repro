@@ -1,24 +1,31 @@
 package com.example.demo;
 
 import static java.net.InetSocketAddress.createUnresolved;
+import static org.assertj.core.api.Assertions.assertThat;
 
 import com.datastax.oss.driver.api.core.CqlSession;
 import com.datastax.oss.driver.api.core.config.DriverConfigLoader;
+import com.datastax.oss.driver.api.core.metadata.EndPoint;
 import com.datastax.oss.driver.api.core.metadata.Node;
 import com.datastax.oss.driver.internal.core.context.DefaultDriverContext;
 import com.datastax.oss.driver.internal.core.control.ControlConnection;
 import com.datastax.oss.driver.internal.core.metadata.DefaultNode;
 import com.datastax.oss.driver.internal.core.metadata.NodeStateEvent;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.Test;
 import software.aws.mcs.auth.SigV4AuthProvider;
 
-public class KeyspacesReconnectIssueRepro {
+public class KeyspacesReconnectIssueReproTest {
   private static final String AWS_KEYSPACES_ENDPOINT = "cassandra.eu-west-1.amazonaws.com";
   private static final String AWS_KEYSPACES_REGION = "eu-west-1";
 
-  public static void main(String[] args) throws InterruptedException {
+  @Test
+  public void shouldReturnStableKeysOnNodeListRefresh() throws InterruptedException {
     CqlSession cqlSession =
-        CqlSession.builder()
+        new InterceptingCqlSessionBuilder()
             .withConfigLoader(DriverConfigLoader.fromClasspath("keyspaces.conf"))
             .addContactPoint(createUnresolved(AWS_KEYSPACES_ENDPOINT, 9142))
             .withLocalDatacenter(AWS_KEYSPACES_REGION)
@@ -37,6 +44,16 @@ public class KeyspacesReconnectIssueRepro {
 
     context.getEventBus().fire(NodeStateEvent.removed((DefaultNode) node));
 
-    Thread.sleep(TimeUnit.SECONDS.toMillis(30));
+    Thread.sleep(TimeUnit.SECONDS.toMillis(5));
+
+    cqlSession.close();
+
+    List<Map<UUID, EndPoint>> nodeListHistory =
+        ((InterceptingTopologyMonitor) context.getTopologyMonitor()).getHistory();
+
+    Map<UUID, EndPoint> firstNodeList = nodeListHistory.get(0);
+
+    assertThat(nodeListHistory)
+        .allSatisfy(nodeList -> assertThat(nodeList.keySet()).isEqualTo(firstNodeList.keySet()));
   }
 }
