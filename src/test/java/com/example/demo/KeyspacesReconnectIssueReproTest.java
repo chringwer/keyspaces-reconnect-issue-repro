@@ -5,15 +5,13 @@ import static java.net.InetSocketAddress.createUnresolved;
 import com.datastax.oss.driver.api.core.CqlSession;
 import com.datastax.oss.driver.api.core.config.DriverConfigLoader;
 import com.datastax.oss.driver.api.core.metadata.EndPoint;
-import com.datastax.oss.driver.api.core.metadata.Node;
 import com.datastax.oss.driver.internal.core.context.DefaultDriverContext;
 import com.datastax.oss.driver.internal.core.control.ControlConnection;
-import com.datastax.oss.driver.internal.core.metadata.DefaultNode;
-import com.datastax.oss.driver.internal.core.metadata.NodeStateEvent;
 import com.datastax.oss.driver.shaded.guava.common.collect.Maps;
 import com.datastax.oss.driver.shaded.guava.common.collect.Multimap;
 import com.datastax.oss.driver.shaded.guava.common.collect.MultimapBuilder;
 import com.datastax.oss.driver.shaded.guava.common.collect.Multimaps;
+import com.example.demo.InterceptingTopologyMonitor.IntermediateNodeList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -39,23 +37,21 @@ public class KeyspacesReconnectIssueReproTest {
             .build();
 
     DefaultDriverContext context = (DefaultDriverContext) cqlSession.getContext();
-    ControlConnection controlConnection = context.getControlConnection();
 
-    Node node =
-        context
-            .getMetadataManager()
-            .getMetadata()
-            .findNode(controlConnection.channel().getEndPoint())
-            .orElseThrow();
+    context.getControlConnection().reconnectNow();
 
-    context.getEventBus().fire(NodeStateEvent.removed((DefaultNode) node));
-
-    Thread.sleep(TimeUnit.SECONDS.toMillis(5));
+    Thread.sleep(TimeUnit.SECONDS.toMillis(10));
 
     cqlSession.close();
 
-    List<Map<UUID, EndPoint>> nodeListHistory =
+    List<IntermediateNodeList> nodeListHistory =
         ((InterceptingTopologyMonitor) context.getTopologyMonitor()).getHistory();
+
+    nodeListHistory.forEach(
+        nodeList -> {
+          nodeList.print();
+          System.err.println("\n--\n");
+        });
 
     SoftAssertions assertions = new SoftAssertions();
 
@@ -73,10 +69,10 @@ public class KeyspacesReconnectIssueReproTest {
   }
 
   private static Map<EndPoint, Collection<UUID>> findAmbiguousEndpoints(
-      List<Map<UUID, EndPoint>> nodeListHistory) {
+      List<IntermediateNodeList> nodeListHistory) {
     Multimap<EndPoint, UUID> hostIdByEndpoint =
         nodeListHistory.stream()
-            .flatMap(nodeList -> nodeList.entrySet().stream())
+            .flatMap(nodeList -> nodeList.endpointsById().entrySet().stream())
             .collect(
                 Multimaps.toMultimap(
                     Entry::getValue,
@@ -87,10 +83,10 @@ public class KeyspacesReconnectIssueReproTest {
   }
 
   private static Map<UUID, Collection<EndPoint>> findAmbiguousHostIds(
-      List<Map<UUID, EndPoint>> nodeListHistory) {
+      List<IntermediateNodeList> nodeListHistory) {
     Multimap<UUID, EndPoint> endpointsByHostId =
         nodeListHistory.stream()
-            .flatMap(nodeList -> nodeList.entrySet().stream())
+            .flatMap(nodeList -> nodeList.endpointsById().entrySet().stream())
             .collect(
                 Multimaps.toMultimap(
                     Entry::getKey,
